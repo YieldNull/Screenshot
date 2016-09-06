@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<android.support.percent.PercentRelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/percentRelativeLayout"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_centerInParent="true"
+    android:layout_gravity="center"
+    android:background="@drawable/border_preview">
+
+    <!--suppress AndroidDomInspection -->
+    <ImageView
+        android:id="@+id/imageView"
+        android:layout_centerInParent="true"
+        app:layout_aspectRatio="56.25%"
+        app:layout_widthPercent="75%" />
+</android.support.percent.PercentRelativeLayout>
