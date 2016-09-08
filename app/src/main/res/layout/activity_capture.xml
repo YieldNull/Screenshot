@@ -10,8 +10,8 @@
     android:background="@drawable/border_preview">
 
     <!--suppress AndroidDomInspection -->
-    <ImageView
-        android:id="@+id/imageView"
+    <TextureView
+        android:id="@+id/textureView"
         android:layout_centerInParent="true"
         app:layout_aspectRatio="56.25%"
         app:layout_widthPercent="75%" />

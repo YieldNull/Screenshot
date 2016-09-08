@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
+import android.graphics.SurfaceTexture;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.Image;
@@ -21,10 +22,10 @@ import android.support.v7.app.AppCompatActivity;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.ImageView;
-import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -45,7 +46,8 @@ public class CaptureActivity extends AppCompatActivity {
     private MediaProjection mMediaProjection;
 
     private ImageReader mImageReader;
-    private VirtualDisplay mVirtualDisplay;
+    private VirtualDisplay mCaptureVirtualDisplay;
+    private VirtualDisplay mPreviewVirtualDisplay;
 
     private Handler mWorkingHandler;
     private HandlerThread mWorkingThread;
@@ -56,8 +58,12 @@ public class CaptureActivity extends AppCompatActivity {
     private int mHeight;
     private int mDensityDpi;
 
-    private ImageView mPreviewImage;
+    private TextureView mTextureView;
+    private Surface mPreviewSurface;
     private PercentRelativeLayout mRelativeLayout;
+
+    private boolean gotPreview;
+    private boolean gotCapture;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -91,14 +97,13 @@ public class CaptureActivity extends AppCompatActivity {
 
 
         // set preview image and its container invisible
-        mPreviewImage = (ImageView) findViewById(R.id.imageView);
+        mTextureView = (TextureView) findViewById(R.id.textureView);
         mRelativeLayout = (PercentRelativeLayout) findViewById(R.id.percentRelativeLayout);
 
-        mPreviewImage.setImageDrawable(null);
         mRelativeLayout.setBackground(null);
 
         // set preview image size corresponding to orientation
-        PercentRelativeLayout.LayoutParams params = (PercentRelativeLayout.LayoutParams) mPreviewImage.getLayoutParams();
+        PercentRelativeLayout.LayoutParams params = (PercentRelativeLayout.LayoutParams) mTextureView.getLayoutParams();
         PercentLayoutHelper.PercentLayoutInfo info = params.getPercentLayoutInfo();
 
         if (mWidth < mHeight) {
@@ -107,28 +112,59 @@ public class CaptureActivity extends AppCompatActivity {
             info.widthPercent = 1.0f; // why in landscape mode wrap_content not working?
         }
         info.aspectRatio = mWidth * 1.0f / mHeight;
-        mPreviewImage.requestLayout();
-
-
-        // init working thread
-        mWorkingThread = new HandlerThread("CaptureThread");
-        mWorkingThread.start();
-        mWorkingHandler = new Handler(mWorkingThread.getLooper());
+        mTextureView.requestLayout();
 
         // file repository
         repository = new File(Environment.getExternalStoragePublicDirectory(
                 Environment.DIRECTORY_PICTURES), "Screenshots");
 
 
+        // init thread for saving capture to file
+        mWorkingThread = new HandlerThread("CaptureThread");
+        mWorkingThread.start();
+        mWorkingHandler = new Handler(mWorkingThread.getLooper());
+
+
         // init capture
         mProjectionManager = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
         mImageReader = ImageReader.newInstance(mWidth, mHeight, PixelFormat.RGBA_8888, 2);
+        mTextureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
 
+            private int count = 0;
+
+            @Override
+            public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                mPreviewSurface = new Surface(surface);
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                return false;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+
+                if (count++ == 0) {
+                    Log.i(TAG, "SurfaceTexture: updated");
+                    showPreview();
+                    gotPreview = true;
+                    stopProjection();
+                }
+            }
+        });
 
         // start capture when quick setting panel collapsed
         new Handler().postDelayed(new Runnable() {
             @Override
             public void run() {
+                Log.i(TAG, "starting projection");
+
                 startActivityForResult(mProjectionManager.createScreenCaptureIntent(), REQUEST_CODE);
             }
         }, 1000);
@@ -137,13 +173,25 @@ public class CaptureActivity extends AppCompatActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        Log.i(TAG, "activityResult");
+        Log.i(TAG, "onActivityResult");
 
         if (requestCode == REQUEST_CODE && resultCode == Activity.RESULT_OK) {
             mMediaProjection = mProjectionManager.getMediaProjection(resultCode, data);
 
+            Log.i(TAG, "projection started");
+
             if (mMediaProjection != null) {
-                handleCapture(mMediaProjection);
+                mCaptureVirtualDisplay = mMediaProjection.createVirtualDisplay("ScreenCapture",
+                        mWidth, mHeight, mDensityDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                        mImageReader.getSurface(), null, null);
+
+                mPreviewVirtualDisplay = mMediaProjection.createVirtualDisplay("ScreenPreview",
+                        mTextureView.getWidth(), mTextureView.getHeight(), mDensityDpi,
+                        DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+                        mPreviewSurface, null, null);
+
+                mImageReader.setOnImageAvailableListener(mImageAvailableListener, mWorkingHandler);
 
                 mMediaProjection.registerCallback(mProjectionStopCallback, mWorkingHandler);
             }
@@ -161,102 +209,117 @@ public class CaptureActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
-    private void handleCapture(MediaProjection mediaProjection) {
 
-        mVirtualDisplay = mediaProjection.createVirtualDisplay("ScreenCapture",
-                mWidth, mHeight, mDensityDpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
-                mImageReader.getSurface(), null, mWorkingHandler);
-
-
-        mImageReader.setOnImageAvailableListener(mImageAvailableListener, mWorkingHandler);
-    }
-
-    private void showPreview(Bitmap bitmap) {
+    /**
+     * Show preview
+     */
+    private void showPreview() {
         Log.i(TAG, "Show preview");
 
         WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
         layoutParams.dimAmount = 0.6f;
         getWindow().setAttributes(layoutParams);
 
-        mPreviewImage.setImageBitmap(bitmap);
         mRelativeLayout.setBackground(getDrawable(R.drawable.border_preview));
     }
 
+
     /**
+     * Stop projection after showing preview and capturing screen.
+     */
+    private void stopProjection() {
+        if (gotCapture && gotPreview) {
+            mMediaProjection.stop();
+        }
+    }
+
+
+    /**
+     * Release virtual display when stopping projection.
+     */
+    private MediaProjection.Callback mProjectionStopCallback = new MediaProjection.Callback() {
+        @Override
+        public void onStop() {
+            Log.i(TAG, "projection stopped");
+
+            mCaptureVirtualDisplay.release();
+            mPreviewVirtualDisplay.release();
+
+            mCaptureVirtualDisplay = null;
+            mPreviewVirtualDisplay = null;
+        }
+    };
+
+
+    /**
+     * Saving captured image to file.
+     * <p/>
      * http://stackoverflow.com/questions/27581750/android-capture-screen-to-surface-of-imagereader
      */
     private ImageReader.OnImageAvailableListener mImageAvailableListener = new ImageReader.OnImageAvailableListener() {
+
         @Override
         public void onImageAvailable(ImageReader reader) {
-            Log.i(TAG, "image available");
-
-            CaptureActivity.this.runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    Toast.makeText(CaptureActivity.this, "Saving picture", Toast.LENGTH_LONG).show();
-                }
-            });
+            Log.i(TAG, "ImageReader:image available");
 
             mImageReader.setOnImageAvailableListener(null, null);
+
+            gotCapture = true;
+            stopProjection();
 
             Image image = null;
             try {
                 image = mImageReader.acquireLatestImage();
 
-                if (image != null) {
-                    Image.Plane[] planes = image.getPlanes();
-                    ByteBuffer buffer = planes[0].getBuffer();
+                if (image == null) {
+                    return;
+                }
 
-                    int width = image.getWidth();
-                    int height = image.getHeight();
-                    int pixelStride = planes[0].getPixelStride();
-                    int rowStride = planes[0].getRowStride();
-                    int rowPadding = rowStride - pixelStride * width;
+                Image.Plane[] planes = image.getPlanes();
+                ByteBuffer buffer = planes[0].getBuffer();
+
+                int width = image.getWidth();
+                int height = image.getHeight();
+                int pixelStride = planes[0].getPixelStride();
+                int rowStride = planes[0].getRowStride();
+                int rowPadding = rowStride - pixelStride * width;
 
 
-                    int offset = 0;
-                    final Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-                    for (int i = 0; i < height; ++i) {
-                        for (int j = 0; j < width; ++j) {
-                            int pixel = 0;
-                            pixel |= (buffer.get(offset) & 0xff) << 16;     // R
-                            pixel |= (buffer.get(offset + 1) & 0xff) << 8;  // G
-                            pixel |= (buffer.get(offset + 2) & 0xff);       // B
-                            pixel |= (buffer.get(offset + 3) & 0xff) << 24; // A
-                            bitmap.setPixel(j, i, pixel);
-                            offset += pixelStride;
-                        }
-                        offset += rowPadding;
+                int offset = 0;
+                final Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                for (int i = 0; i < height; ++i) {
+                    for (int j = 0; j < width; ++j) {
+                        int pixel = 0;
+                        pixel |= (buffer.get(offset) & 0xff) << 16;     // R
+                        pixel |= (buffer.get(offset + 1) & 0xff) << 8;  // G
+                        pixel |= (buffer.get(offset + 2) & 0xff);       // B
+                        pixel |= (buffer.get(offset + 3) & 0xff) << 24; // A
+                        bitmap.setPixel(j, i, pixel);
+                        offset += pixelStride;
                     }
-
-                    CaptureActivity.this.runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            showPreview(bitmap);
-                        }
-                    });
+                    offset += rowPadding;
+                }
 
 
-                    FileOutputStream fos = null;
+                FileOutputStream fos = null;
 
-                    SimpleDateFormat dateFormat = new SimpleDateFormat("yyyyMMDD-HHmmss", Locale.ENGLISH);
-                    String time = dateFormat.format(new Date());
+                SimpleDateFormat dateFormat = new SimpleDateFormat("yyyyMMDD-HHmmss", Locale.ENGLISH);
+                String time = dateFormat.format(new Date());
 
-                    try {
-                        fos = new FileOutputStream(new File(repository, String.format("Screenshot_%s.png", time)));
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+                try {
+                    fos = new FileOutputStream(new File(repository, String.format("Screenshot_%s.png", time)));
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
 
-                        Log.i(TAG, "image captured");
+                    Log.i(TAG, "ImageReader:image captured");
 
-                    } catch (FileNotFoundException e) {
-                        Log.w(TAG, e.getMessage());
-                    } finally {
-                        if (fos != null) {
-                            try {
-                                fos.close();
-                            } catch (IOException ignored) {
-                            }
+                } catch (FileNotFoundException e) {
+                    Log.w(TAG, e.getMessage());
+                } finally {
+                    if (fos != null) {
+                        try {
+                            fos.close();
+                        } catch (IOException e) {
+                            Log.w(TAG, e.getMessage());
                         }
                     }
                 }
@@ -267,22 +330,6 @@ public class CaptureActivity extends AppCompatActivity {
                     image.close();
                 }
             }
-
-            mMediaProjection.stop();
-        }
-    };
-
-    private MediaProjection.Callback mProjectionStopCallback = new MediaProjection.Callback() {
-        @Override
-        public void onStop() {
-            Log.i(TAG, "projection stopped");
-
-            mWorkingHandler.post(new Runnable() {
-                @Override
-                public void run() {
-                    mVirtualDisplay.release();
-                }
-            });
         }
     };
 }
