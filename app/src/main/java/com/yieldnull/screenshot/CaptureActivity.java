@@ -16,8 +16,6 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
-import android.support.percent.PercentLayoutHelper;
-import android.support.percent.PercentRelativeLayout;
 import android.support.v7.app.AppCompatActivity;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -26,6 +24,7 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.RelativeLayout;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -60,7 +59,7 @@ public class CaptureActivity extends AppCompatActivity {
 
     private TextureView mTextureView;
     private Surface mPreviewSurface;
-    private PercentRelativeLayout mRelativeLayout;
+    private RelativeLayout mRelativeLayout;
 
     private boolean gotPreview;
     private boolean gotCapture;
@@ -74,11 +73,6 @@ public class CaptureActivity extends AppCompatActivity {
         // AppCompat no title
         supportRequestWindowFeature(Window.FEATURE_NO_TITLE);
         setContentView(R.layout.activity_capture);
-
-        // disable background dim when capturing
-        WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
-        layoutParams.dimAmount = 0;
-        getWindow().setAttributes(layoutParams);
 
         // get screen width, height and density
         Display display = getWindowManager().getDefaultDisplay();
@@ -94,28 +88,31 @@ public class CaptureActivity extends AppCompatActivity {
         Log.i(TAG, String.format("Screen:: Width:%d Height:%d Density:%d", mWidth, mHeight, mDensityDpi));
 
 
+        // disable background dim when capturing && set window size to avoid landscape mode maxWidth
+        WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
+        layoutParams.dimAmount = 0;
+        layoutParams.width = (int) (mWidth * 0.9);
+        layoutParams.height = (int) (mHeight * 0.9);
+        getWindow().setAttributes(layoutParams);
+
+
         // set preview image and its container invisible
         mTextureView = (TextureView) findViewById(R.id.textureView);
-        mRelativeLayout = (PercentRelativeLayout) findViewById(R.id.percentRelativeLayout);
+        mRelativeLayout = (RelativeLayout) findViewById(R.id.relativeLayout);
 
         mRelativeLayout.setBackground(null);
 
         // set preview image size corresponding to orientation
-        PercentRelativeLayout.LayoutParams params = (PercentRelativeLayout.LayoutParams) mTextureView.getLayoutParams();
-        PercentLayoutHelper.PercentLayoutInfo info = params.getPercentLayoutInfo();
-
-        if (mWidth < mHeight) {
-            info.widthPercent = 0.75f;
-        } else {
-            info.widthPercent = 1.0f; // why in landscape mode wrap_content not working?
-        }
-        info.aspectRatio = mWidth * 1.0f / mHeight;
+        RelativeLayout.LayoutParams params = (RelativeLayout.LayoutParams) mTextureView.getLayoutParams();
+        params.width = (int) (mWidth * 0.75);
+        params.height = (int) (mHeight * 0.75);
         mTextureView.requestLayout();
+
+        Log.i(TAG, String.format("width:%d height:%d", params.width, params.height));
 
         // file repository
         repository = new File(Environment.getExternalStoragePublicDirectory(
                 Environment.DIRECTORY_PICTURES), "Screenshots");
-
 
         // init thread for saving capture to file
         mWorkingThread = new HandlerThread("CaptureThread");
@@ -188,9 +185,10 @@ public class CaptureActivity extends AppCompatActivity {
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY | DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
                         mPreviewSurface, null, null);
 
+                Log.i(TAG, String.format("width:%d height:%d", mTextureView.getWidth(), mTextureView.getHeight()));
                 mImageReader.setOnImageAvailableListener(mImageAvailableListener, mWorkingHandler);
 
-                mMediaProjection.registerCallback(mProjectionStopCallback, mWorkingHandler);
+                mMediaProjection.registerCallback(mProjectionStopCallback, null);
             }
 
         } else {
@@ -226,8 +224,14 @@ public class CaptureActivity extends AppCompatActivity {
      */
     private void stopProjection() {
         if (gotCapture && gotPreview) {
-            showPreview();
             mMediaProjection.stop();
+
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    showPreview();
+                }
+            });
         }
     }
 
