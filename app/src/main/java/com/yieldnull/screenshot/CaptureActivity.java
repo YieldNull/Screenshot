@@ -75,12 +75,10 @@ public class CaptureActivity extends AppCompatActivity {
         supportRequestWindowFeature(Window.FEATURE_NO_TITLE);
         setContentView(R.layout.activity_capture);
 
-
         // disable background dim when capturing
         WindowManager.LayoutParams layoutParams = getWindow().getAttributes();
         layoutParams.dimAmount = 0;
         getWindow().setAttributes(layoutParams);
-
 
         // get screen width, height and density
         Display display = getWindowManager().getDefaultDisplay();
@@ -152,7 +150,6 @@ public class CaptureActivity extends AppCompatActivity {
 
                 if (count++ == 0) {
                     Log.i(TAG, "SurfaceTexture: updated");
-                    showPreview();
                     gotPreview = true;
                     stopProjection();
                 }
@@ -229,6 +226,7 @@ public class CaptureActivity extends AppCompatActivity {
      */
     private void stopProjection() {
         if (gotCapture && gotPreview) {
+            showPreview();
             mMediaProjection.stop();
         }
     }
@@ -284,25 +282,29 @@ public class CaptureActivity extends AppCompatActivity {
                 int rowStride = planes[0].getRowStride();
                 int rowPadding = rowStride - pixelStride * width;
 
+                Log.i(TAG, "Starting process");
+
+                ByteBuffer bufferCopy = ByteBuffer.allocate(mWidth * mHeight * 4);
+                final Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
 
                 int offset = 0;
-                final Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+                int index = 0;
                 for (int i = 0; i < height; ++i) {
                     for (int j = 0; j < width; ++j) {
-                        int pixel = 0;
-                        pixel |= (buffer.get(offset) & 0xff) << 16;     // R
-                        pixel |= (buffer.get(offset + 1) & 0xff) << 8;  // G
-                        pixel |= (buffer.get(offset + 2) & 0xff);       // B
-                        pixel |= (buffer.get(offset + 3) & 0xff) << 24; // A
-                        bitmap.setPixel(j, i, pixel);
+                        bufferCopy.put(index++, buffer.get(offset));
+                        bufferCopy.put(index++, buffer.get(offset + 1));
+                        bufferCopy.put(index++, buffer.get(offset + 2));
+                        bufferCopy.put(index++, buffer.get(offset + 3));
+
                         offset += pixelStride;
                     }
                     offset += rowPadding;
                 }
+                bitmap.copyPixelsFromBuffer(bufferCopy);
 
+                Log.i(TAG, "Starting storing file");
 
                 FileOutputStream fos = null;
-
                 SimpleDateFormat dateFormat = new SimpleDateFormat("yyyyMMDD-HHmmss", Locale.ENGLISH);
                 String time = dateFormat.format(new Date());
 
